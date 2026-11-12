@@ -1,97 +1,130 @@
-# Redis vs Dragonfly: benchmark harness
+# Redis vs Dragonfly: reproducible benchmark
 
-A reproducible, single-node benchmark harness comparing **Redis OSS 8.10.3** and **Dragonfly 2.0.0** using the same Go client and workload.
+A reproducible, single-node benchmark suite comparing **Redis OSS 8.10.3** and **Dragonfly 2.0.0** with controlled Go workloads.
 
-> **No benchmark results are claimed yet.** This repository contains the harness and methodology. Run it on a documented machine and preserve raw output before publishing conclusions.
+> **No performance findings are pre-filled.** Run the experiments on your own documented hardware and publish the raw JSONL files with any conclusions. The harness is code, not evidence until it has been run.
 
-## Pinned server versions
+## Pinned versions
 
 - Redis OSS: `redis:8.10.3`
 - Dragonfly: `docker.dragonflydb.io/dragonflydb/dragonfly:v2.0.0`
+- go-redis: `github.com/redis/go-redis/v9 v9.7.3`
+- Rueidis: `github.com/redis/rueidis v1.0.79`
 
-These are explicit version tags, not floating `latest` tags. Record the resolved image digests from your own machine with `docker image inspect` when publishing results.
+The Rueidis comparison disables its automatic pipelining and client-side cache. This isolates the direct-command path; it is not a comparison of each library's maximum-throughput defaults. Rueidis also supports manual `DoMulti` batching, used by the pipeline experiment.
 
-## What it measures
+## Requirements
 
-- SET and GET throughput (successful operations/second)
-- P50, P95, P99 and P99.9 client-observed latency
-- Configurable operation count, concurrency, value size and warm-up count
-- The same Go client implementation and workload against both servers
+- Docker Compose
+- Go 1.25+
+- curl (for the Toxiproxy latency experiment)
 
-The baseline intentionally uses one client implementation so we don't conflate server differences with client-library differences. Client comparisons (such as go-redis versus valkey-go) should be a separate experiment.
-
-## Run
-
-Requirements: Docker Compose and Go 1.22+.
+## Quick baseline
 
 ```bash
 docker compose up -d --wait
-docker compose ps
-
 go run ./cmd/bench -op set -n 100000 -c 32 -value-size 128 -warmup 10000
 go run ./cmd/bench -op get -n 100000 -c 32 -value-size 128 -warmup 10000
-
 docker compose down
 ```
 
-The CLI prints one JSON object per server (JSON Lines). Save raw output:
+Each invocation emits one JSON object per server. Fields include throughput, errors, concurrency, client, pipeline size and latency percentiles.
+
+## Experiment 1: explicit pipelining
+
+Run batch sizes 1, 10, 50 and 100:
 
 ```bash
-mkdir -p results
-go run ./cmd/bench -op set -n 100000 -c 32 -value-size 128 -warmup 10000 \
-  | tee results/set-$(date +%Y%m%d-%H%M%S).jsonl
+./scripts/run-pipeline-matrix.sh
 ```
 
-Run at least five trials per configuration and report the median and spread, not the best run.
+The benchmark records P50/P95/P99/P99.9 of **batch round-trip time**, not per-command latency, when pipeline size is greater than one. Throughput is successful commands per second. This distinction matters: do not label a batch RTT percentile as an individual operation's latency.
 
-## Experiment matrix
+## Experiment 2: artificial network latency
 
-Start with a matrix that varies one factor at a time:
+The Compose stack includes Toxiproxy. The script routes both databases through equivalent proxies and adds a downstream response delay of 0, 1 or 5 ms:
 
-| Workload | Operation | Concurrency | Value size |
-|---|---|---:|---:|
-| Baseline | SET / GET | 1, 8, 32, 64, 128 | 128 B |
-| Payload | SET / GET | 32 | 16 B, 128 B, 1 KiB, 16 KiB |
-| Saturation | SET / GET | 32, 64, 128 | 128 B |
-| Warm connection | SET / GET | 32 | 128 B |
-
-Use identical operation count and warm-up for compared trials. Do not run all configurations concurrently.
-
-## Experimental discipline
-
-1. Run both servers on the same host with identical CPU and memory limits.
-2. Keep other heavy workloads off the host during trials.
-3. Use the same key shape, payload size, operation count, concurrency and client.
-4. Warm up before each measured run.
-5. Repeat each configuration at least five times.
-6. Record CPU model, physical/logical cores, RAM, OS/kernel, Docker and Go versions, image digests, effective server configuration and exact command.
-7. Capture server CPU and memory separately (for example with `docker stats`).
-8. Preserve raw JSONL output and include the experiment environment in the article.
-
-## Interpretation and limitations
-
-- This is a single-node comparison, not a cluster, replication or failover benchmark.
-- Latency is measured by the client and includes client scheduling and network overhead.
-- The harness does not currently measure persistence/durability, recovery time, memory per key, cloud pricing or managed-service behaviour.
-- Matching container CPU/memory limits does not make every server default equivalent. Record configuration and disclose meaningful differences.
-- Report errors alongside throughput; a fast run with failures is not a valid win.
-- No benchmark has been executed by CI. Run and validate the harness locally before publishing findings.
-
-## Layout
-
-```
-cmd/bench/          benchmark CLI
-docker-compose.yml  pinned server images and comparable container limits
-results/            methodology notes and raw trial output
-scripts/            repeatable trial helpers
+```bash
+./scripts/run-network-latency.sh
 ```
 
-## Version references
+The toxic is a one-way downstream delay, so it adds approximately the configured amount to each request's response path, not a symmetric delay in both directions. The 0 ms case still passes through Toxiproxy; compare the three proxy cases with each other, not directly with the no-proxy baseline.
+
+## Experiment 3: client overhead
+
+Compare go-redis and Rueidis with explicit pipeline size 1:
+
+```bash
+./scripts/run-client-matrix.sh
+```
+
+Rueidis automatic pipelining and client-side caching are disabled in this direct-command comparison. The goal is to avoid comparing go-redis direct calls with Rueidis' auto-batched path. A separate experiment can later measure each library's default/optimized mode, but that would answer a different question.
+
+## Run a custom configuration
+
+```bash
+go run ./cmd/bench \
+  -client go-redis \
+  -op set \
+  -pipeline 50 \
+  -n 100000 \
+  -c 32 \
+  -value-size 128 \
+  -warmup 10000
+```
+
+Options:
+
+| Flag | Default | Meaning |
+|---|---:|---|
+| `-client` | go-redis | go-redis or rueidis |
+| `-op` | set | set or get |
+| `-pipeline` | 1 | Commands per request/round trip |
+| `-n` | 100000 | Measured commands per server |
+| `-c` | 32 | Concurrent workers |
+| `-value-size` | 128 | Payload bytes |
+| `-warmup` | 10000 | Warm-up operations |
+| `-redis-addr` | localhost:6379 | Redis endpoint |
+| `-dragonfly-addr` | localhost:6380 | Dragonfly endpoint |
+
+## Experimental protocol
+
+1. Use the same host, CPU/memory limits, dataset shape, key count, payload, command count and concurrency.
+2. Run one experiment at a time; avoid other heavy workloads.
+3. Run at least five trials per configuration and report median plus spread.
+4. Capture CPU and memory independently (e.g. `docker stats`).
+5. Record CPU model, core count, RAM, OS/kernel, Docker and Go versions, image digests, effective server configuration and exact commands.
+6. Preserve every raw result, including failed trials; report errors.
+7. Randomize or alternate which server runs first in repeated trials to reduce warm-cache/order bias.
+8. For latency experiments, document that Toxiproxy adds downstream delay and that all compared cases use the same proxy path.
+
+## Important limitations
+
+- Single-node only; no replication, cluster, failover, persistence or recovery tests.
+- Client-observed latency includes client scheduling, serialization and network overhead.
+- Batch percentiles are batch round-trip times when pipeline size is greater than one.
+- Container CPU/memory limits do not guarantee equivalent internal tuning. Record effective configuration.
+- The client comparison is limited to direct-command mode with Rueidis auto-pipelining disabled; do not generalize it to each library's maximum throughput.
+- No benchmark has been run by CI. CI verifies build, vet and unit tests only.
+
+## Repository layout
+
+```
+cmd/bench/                       Go benchmark CLI and unit tests
+scripts/run-pipeline-matrix.sh   batch size sweep
+scripts/run-network-latency.sh   Toxiproxy delay sweep
+scripts/run-client-matrix.sh     client implementation comparison
+docker-compose.yml               pinned databases and Toxiproxy
+results/                          raw output and methodology notes
+```
+
+## References
 
 - [Redis 8.10 release notes](https://redis.io/docs/latest/operate/oss_and_stack/stack-with-enterprise/release-notes/redisce/redisos-8.10-release-notes/)
-- [Redis official Docker image tags](https://hub.docker.com/_/redis/)
-- [Dragonfly v2.0.0 release](https://github.com/dragonflydb/dragonfly/releases/tag/v2.0.0)
-- [Dragonfly container package versions](https://github.com/dragonflydb/dragonfly/pkgs/container/dragonfly/versions)
+- [Redis official Docker image](https://hub.docker.com/_/redis/)
+- [Dragonfly releases](https://github.com/dragonflydb/dragonfly/releases/tag/v2.0.0)
+- [Rueidis v1.0.79](https://github.com/redis/rueidis/releases/tag/v1.0.79)
+- [Toxiproxy](https://github.com/Shopify/toxiproxy)
 
 ## License
 

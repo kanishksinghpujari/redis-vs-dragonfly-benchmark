@@ -35,3 +35,16 @@ services:
       interval: 2s
       timeout: 1s
       retries: 30
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    container_name: benchmark-toxiproxy
+    ports:
+      - "8474:8474"
+      - "26379:26379"
+      - "26380:26380"
+    depends_on:
+      redis:
+        condition: service_healthy
+      dragonfly:
+        condition: service_healthy
