@@ -3,10 +3,10 @@ set -euo pipefail
 
 mkdir -p results
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-ops="${OPS:-50000}"
-warmup="${WARMUP:-5000}"
+ops="${OPS:-25000}"
+warmup="${WARMUP:-2500}"
 value_size="${VALUE_SIZE:-128}"
-concurrency="${CONCURRENCY:-32}"
+concurrency="${CONCURRENCY:-16}"
 
 docker compose up -d --wait
 trap 'docker compose down' EXIT
@@ -25,11 +25,11 @@ configure_proxy() {
   curl -fsS -X DELETE "http://localhost:8474/proxies/$name" >/dev/null 2>&1 || true
   curl -fsS -X POST http://localhost:8474/proxies \
     -H 'Content-Type: application/json' \
-    -d "{"name":"$name","listen":"0.0.0.0:$listen","upstream":"$upstream","enabled":true}" >/dev/null
+    -d "{\"name\":\"$name\",\"listen\":\"0.0.0.0:$listen\",\"upstream\":\"$upstream\",\"enabled\":true}" >/dev/null
   if [ "$delay_ms" -gt 0 ]; then
     curl -fsS -X POST "http://localhost:8474/proxies/$name/toxics" \
       -H 'Content-Type: application/json' \
-      -d "{"name":"response-latency","type":"latency","stream":"downstream","toxicity":1.0,"attributes":{"latency":$delay_ms,"jitter":0}}" >/dev/null
+      -d "{\"name\":\"response-latency\",\"type\":\"latency\",\"stream\":\"downstream\",\"toxicity\":1.0,\"attributes\":{\"latency\":$delay_ms,\"jitter\":0}}" >/dev/null
   fi
 }
 
