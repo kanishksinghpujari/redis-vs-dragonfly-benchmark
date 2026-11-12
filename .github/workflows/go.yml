@@ -28,7 +28,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: test
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -83,6 +83,13 @@ jobs:
             echo "Network trial $trial"
             bash scripts/run-network-latency.sh
           done
+      - name: Payload size, concurrency and CPU profiling matrix
+        env:
+          OPS: "30000"
+          WARMUP: "3000"
+          TRIALS: "3"
+          CLIENT: "go-redis"
+        run: bash scripts/run-payload-concurrency-profile.sh
       - name: Capture image versions and digests
         if: always()
         run: |
