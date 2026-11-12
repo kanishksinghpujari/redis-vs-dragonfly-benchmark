@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"runtime"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -65,6 +66,7 @@ func (c *goRedisClient) Set(ctx context.Context, key, value string) error { retu
 func (c *goRedisClient) Get(ctx context.Context, key string) error { return c.client.Get(ctx,key).Err() }
 func (c *goRedisClient) Close() error { return c.client.Close() }
 func (c *goRedisClient) SetBatch(ctx context.Context, keys []string, value string) []error {
+	if len(keys)==1 { return []error{c.Set(ctx,keys[0],value)} }
 	pipe:=c.client.Pipeline()
 	cmds:=make([]*redis.StatusCmd,0,len(keys))
 	for _,key:=range keys { cmds=append(cmds,pipe.Set(ctx,key,value,0)) }
@@ -74,6 +76,7 @@ func (c *goRedisClient) SetBatch(ctx context.Context, keys []string, value strin
 	return errs
 }
 func (c *goRedisClient) GetBatch(ctx context.Context, keys []string) []error {
+	if len(keys)==1 { return []error{c.Get(ctx,keys[0])} }
 	pipe:=c.client.Pipeline()
 	cmds:=make([]*redis.StringCmd,0,len(keys))
 	for _,key:=range keys { cmds=append(cmds,pipe.Get(ctx,key)) }
