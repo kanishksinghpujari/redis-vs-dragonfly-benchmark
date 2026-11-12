@@ -77,9 +77,9 @@ func (c *goRedisClient) GetBatch(ctx context.Context, keys []string) []error {
 	pipe:=c.client.Pipeline()
 	cmds:=make([]*redis.StringCmd,0,len(keys))
 	for _,key:=range keys { cmds=append(cmds,pipe.Get(ctx,key)) }
-	_,execErr:=pipe.Exec(ctx)
+	_,_ = pipe.Exec(ctx)
 	errs:=make([]error,len(cmds))
-	for i,cmd:=range cmds { errs[i]=cmd.Err(); if errs[i]==nil && execErr!=nil { errs[i]=execErr } }
+	for i,cmd:=range cmds { errs[i]=cmd.Err() }
 	return errs
 }
 
