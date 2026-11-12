@@ -107,7 +107,7 @@ func (c *rueidisClient) Get(ctx context.Context,key string) error {
 }
 func (c *rueidisClient) Close() error { c.client.Close(); return nil }
 func (c *rueidisClient) SetBatch(ctx context.Context,keys []string,value string) []error {
-	cmds:=make(rueidis.Commands,0,len(keys))
+	cmds:=make([]rueidis.Completed,0,len(keys))
 	for _,key:=range keys { cmds=append(cmds,c.client.B().Set().Key(key).Value(value).Build()) }
 	responses:=c.client.DoMulti(ctx,cmds...)
 	errs:=make([]error,len(keys))
