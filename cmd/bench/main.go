@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"runtime"
+	"runtime/pprof"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -149,7 +150,7 @@ func countErrors(errs []error) int64 {
 	return count
 }
 
-func run(ctx context.Context,t target,clientName,op string,n,concurrency,valueSize,warmup,pipelineSize int) (benchmarkResult,error) {
+func run(ctx context.Context,t target,clientName,op string,n,concurrency,valueSize,warmup,pipelineSize int, cpuProfile string) (benchmarkResult,error) {
 	var client benchClient
 	var err error
 	switch clientName {
@@ -178,6 +179,15 @@ func run(ctx context.Context,t target,clientName,op string,n,concurrency,valueSi
 		if err!=nil { return benchmarkResult{},fmt.Errorf("%s warm-up failed: %w",t.name,err) }
 	}
 
+	var profileFile *os.File
+	if cpuProfile != "" {
+		profileFile, err = os.Create(cpuProfile)
+		if err != nil { return benchmarkResult{}, fmt.Errorf("create CPU profile: %w", err) }
+		if err = pprof.StartCPUProfile(profileFile); err != nil {
+			profileFile.Close()
+			return benchmarkResult{}, fmt.Errorf("start CPU profile: %w", err)
+		}
+	}
 	batchCount:=(n+pipelineSize-1)/pipelineSize
 	latencies:=make([]int64,batchCount)
 	var next atomic.Int64
@@ -203,6 +213,7 @@ func run(ctx context.Context,t target,clientName,op string,n,concurrency,valueSi
 		}()
 	}
 	wait.Wait()
+	if profileFile != nil { pprof.StopCPUProfile(); if err := profileFile.Close(); err != nil { return benchmarkResult{}, fmt.Errorf("close CPU profile: %w", err) } }
 	elapsed:=time.Since(started)
 	// Sort a private slice only after all workers have stopped writing.
 	sortNanos(latencies)
@@ -236,6 +247,7 @@ func main() {
 	redisAddr:=flag.String("redis-addr","localhost:6379","Redis address")
 	dragonflyAddr:=flag.String("dragonfly-addr","localhost:6380","Dragonfly address")
 	timeout:=flag.Duration("timeout",5*time.Minute,"timeout per server")
+	cpuProfilePrefix:=flag.String("cpu-profile-prefix","","optional prefix for one Go client CPU profile per database")
 	flag.Parse()
 	if *op!="set" && *op!="get" { log.Fatal("-op must be set or get") }
 	if *n<=0 || *concurrency<=0 || *valueSize<0 || *warmup<0 || *pipelineSize<=0 { log.Fatal("n, concurrency and pipeline must be positive; value-size and warmup cannot be negative") }
@@ -245,7 +257,9 @@ func main() {
 	encoder:=json.NewEncoder(os.Stdout)
 	for _,server:=range targets {
 		ctx,cancel:=context.WithTimeout(context.Background(),*timeout)
-		result,err:=run(ctx,server,*clientName,*op,*n,*concurrency,*valueSize,*warmup,*pipelineSize)
+		profilePath := ""
+		if *cpuProfilePrefix != "" { profilePath = fmt.Sprintf("%s-%s.pprof", *cpuProfilePrefix, server.name) }
+		result,err:=run(ctx,server,*clientName,*op,*n,*concurrency,*valueSize,*warmup,*pipelineSize,profilePath)
 		cancel()
 		if err!=nil { log.Fatal(err) }
 		if err:=encoder.Encode(result);err!=nil { log.Fatal(err) }
