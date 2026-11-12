@@ -87,6 +87,18 @@ Options:
 | `-redis-addr` | localhost:6379 | Redis endpoint |
 | `-dragonfly-addr` | localhost:6380 | Dragonfly endpoint |
 
+## Experiment 4: payload size and concurrency
+
+Run the expanded workload matrix:
+
+```bash
+./scripts/run-payload-concurrency-profile.sh
+```
+
+The matrix covers 128 B, 1 KB and 10 KB values; concurrency levels 16, 32, 64 and 128; GET and SET; and three trials per configuration. It uses pipeline size 1 so the test focuses on payload and worker concurrency rather than explicit batching. Set `OPS`, `WARMUP`, `TRIALS` or `CLIENT` to override the defaults.
+
+The script samples Docker container CPU and memory once per second. It also captures Go `pprof` CPU profiles for separate 10 KB / 64-worker GET and SET runs. These profiles describe the **benchmark client process**, not the Redis or Dragonfly server. Profiling runs are excluded from the throughput matrix because profiling itself adds overhead. Use the container-stat time series to compare server resource consumption.
+
 ## Experimental protocol
 
 1. Use the same host, CPU/memory limits, dataset shape, key count, payload, command count and concurrency.
@@ -105,7 +117,7 @@ Options:
 - Batch percentiles are batch round-trip times when pipeline size is greater than one.
 - Container CPU/memory limits do not guarantee equivalent internal tuning. Record effective configuration.
 - The client comparison is limited to direct-command mode with Rueidis auto-pipelining disabled; do not generalize it to each library's maximum throughput.
-- No benchmark has been run by CI. CI verifies build, vet and unit tests only.
+- The expanded payload/concurrency workflow records client CPU profiles and Docker container CPU/memory samples; these are diagnostic measurements, not production workload evidence.
 
 ## Repository layout
 
