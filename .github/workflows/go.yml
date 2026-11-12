@@ -1,4 +1,4 @@
-name: Go checks
+name: Go checks and reproducible benchmarks
 
 on:
   push:
@@ -17,9 +17,82 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25.x"
-          cache: true
-      - name: Resolve and verify Go module dependencies
+          cache: false
+      - name: Resolve Go dependencies
         run: go mod tidy
       - run: go test ./...
       - run: go vet ./...
       - run: go build ./cmd/bench
+
+  benchmark:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache: false
+      - name: Capture runner metadata
+        run: |
+          mkdir -p results
+          {
+            echo "UTC: $(date -u --iso-8601=seconds)"
+            echo "Go: $(go version)"
+            echo "Kernel: $(uname -a)"
+            echo "CPU:"
+            lscpu
+            echo "Memory:"
+            free -h
+            echo "Docker:"
+            docker version
+            echo "Compose:"
+            docker compose version
+          } > results/runner-metadata.txt
+      - name: Resolve Go dependencies
+        run: go mod tidy
+      - name: Pipeline matrix (3 trials)
+        env:
+          OPS: "50000"
+          WARMUP: "5000"
+          CONCURRENCY: "16"
+        run: |
+          for trial in 1 2 3; do
+            echo "Pipeline trial $trial"
+            bash scripts/run-pipeline-matrix.sh
+          done
+      - name: Client matrix (3 trials)
+        env:
+          OPS: "50000"
+          WARMUP: "5000"
+          CONCURRENCY: "16"
+        run: |
+          for trial in 1 2 3; do
+            echo "Client trial $trial"
+            bash scripts/run-client-matrix.sh
+          done
+      - name: Network latency matrix (3 trials)
+        env:
+          OPS: "25000"
+          WARMUP: "2500"
+          CONCURRENCY: "16"
+        run: |
+          for trial in 1 2 3; do
+            echo "Network trial $trial"
+            bash scripts/run-network-latency.sh
+          done
+      - name: Capture image versions and digests
+        if: always()
+        run: |
+          docker image ls --digests > results/docker-images.txt || true
+          docker compose ps -a > results/docker-compose-status.txt || true
+      - name: Upload raw benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: redis-dragonfly-benchmark-results
+          path: results/
+          if-no-files-found: warn
+          retention-days: 30
