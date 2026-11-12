@@ -14,7 +14,7 @@ services:
       - noeviction
     ports:
       - "6379:6379"
-    cpus: 2.0
+    cpus: 1.0
     mem_limit: 2g
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
